@@ -106,7 +106,7 @@ void InfluxdbWriter::Start(bool runtimeCreated)
 	m_FlushTimer->Reschedule(0);
 
 	/* Register for new metrics. */
-	Service::OnNewCheckResult.connect(boost::bind(&InfluxdbWriter::CheckResultHandler, this, _1, _2));
+	Checkable::OnNewCheckResult.connect(boost::bind(&InfluxdbWriter::CheckResultHandler, this, _1, _2));
 }
 
 void InfluxdbWriter::Stop(bool runtimeRemoved)
@@ -134,7 +134,7 @@ void InfluxdbWriter::ExceptionHandler(boost::exception_ptr exp)
 	//TODO: Close the connection, if we keep it open.
 }
 
-Stream::Ptr InfluxdbWriter::Connect()
+Stream::Ptr InfluxdbWriter::Connect(void)
 {
 	TcpSocket::Ptr socket = new TcpSocket();
 
@@ -176,10 +176,10 @@ Stream::Ptr InfluxdbWriter::Connect()
 
 void InfluxdbWriter::CheckResultHandler(const Checkable::Ptr& checkable, const CheckResult::Ptr& cr)
 {
-	m_WorkQueue.Enqueue(boost::bind(&InfluxdbWriter::InternalCheckResultHandler, this, checkable, cr));
+	m_WorkQueue.Enqueue(boost::bind(&InfluxdbWriter::CheckResultHandlerWQ, this, checkable, cr), PriorityLow);
 }
 
-void InfluxdbWriter::InternalCheckResultHandler(const Checkable::Ptr& checkable, const CheckResult::Ptr& cr)
+void InfluxdbWriter::CheckResultHandlerWQ(const Checkable::Ptr& checkable, const CheckResult::Ptr& cr)
 {
 	AssertOnWorkQueue();
 
@@ -391,29 +391,44 @@ void InfluxdbWriter::SendMetric(const Dictionary::Ptr& tmpl, const String& label
 	    << "Add to metric list: '" << msgbuf.str() << "'.";
 
 	// Atomically buffer the data point
-	boost::mutex::scoped_lock lock(m_DataBufferMutex);
 	m_DataBuffer.push_back(String(msgbuf.str()));
 
 	// Flush if we've buffered too much to prevent excessive memory use
 	if (static_cast<int>(m_DataBuffer.size()) >= GetFlushThreshold()) {
 		Log(LogDebug, "InfluxdbWriter")
 		    << "Data buffer overflow writing " << m_DataBuffer.size() << " data points";
-		Flush();
+
+		double st = Utility::GetTime();
+
+		try {
+			Flush();
+		} catch (...) {
+			/* Do nothing. */
+		}
+
+		double et = Utility::GetTime();
+		Log(LogInformation, "InfluxDbWriter")
+		    << "Flush() took " << Utility::FormatDuration(et - st);
 	}
 }
 
 void InfluxdbWriter::FlushTimeout(void)
 {
-	// Prevent new data points from being added to the array, there is a
-	// race condition where they could disappear
-	boost::mutex::scoped_lock lock(m_DataBufferMutex);
+	m_WorkQueue.Enqueue(boost::bind(&InfluxdbWriter::FlushTimeoutWQ, this), PriorityHigh);
+}
+
+void InfluxdbWriter::FlushTimeoutWQ(void)
+{
+	AssertOnWorkQueue();
 
 	// Flush if there are any data available
-	if (m_DataBuffer.size() > 0) {
-		Log(LogDebug, "InfluxdbWriter")
-		    << "Timer expired writing " << m_DataBuffer.size() << " data points";
-		Flush();
-	}
+	if (m_DataBuffer.empty())
+		return;
+
+	Log(LogDebug, "InfluxdbWriter")
+	    << "Timer expired writing " << m_DataBuffer.size() << " data points";
+
+	Flush();
 }
 
 void InfluxdbWriter::Flush(void)
