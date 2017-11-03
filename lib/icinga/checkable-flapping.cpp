@@ -27,7 +27,7 @@ using namespace icinga;
 void Checkable::UpdateFlappingStatus(bool stateChange)
 {
 	std::bitset<20> stateChangeBuf = GetFlappingBuffer();
-	int oldestIndex = (GetFlappingBuffer() & 0xFF00000) >> 20;
+	int oldestIndex = GetFlappingIndex();
 
 	stateChangeBuf[oldestIndex] = stateChange;
 	oldestIndex = (oldestIndex + 1) % 20;
@@ -51,7 +51,8 @@ void Checkable::UpdateFlappingStatus(bool stateChange)
 	if (flapping != GetFlapping())
 		SetFlappingLastChange(Utility::GetTime());
 
-	SetFlappingBuffer((stateChangeBuf.to_ulong() | (oldestIndex << 20)));
+	SetFlappingBuffer(stateChangeBuf.to_ulong());
+	SetFlappingIndex(oldestIndex);
 	SetFlappingCurrent(flappingValue);
 	SetFlapping(flapping);
 }
