@@ -72,7 +72,7 @@ Dictionary::Ptr ApiActions::ProcessCheckResult(const ConfigObject::Ptr& object,
 		    "Cannot process passive check result for non-existent object.");
 
 	if (!checkable->GetEnablePassiveChecks())
-		return ApiActions::CreateResult(400, "Passive checks are disabled for object '" + checkable->GetName() + "'.");
+		return ApiActions::CreateResult(403, "Passive checks are disabled for object '" + checkable->GetName() + "'.");
 
 	Host::Ptr host;
 	Service::Ptr service;
